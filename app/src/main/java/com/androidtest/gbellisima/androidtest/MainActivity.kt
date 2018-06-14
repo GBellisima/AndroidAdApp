@@ -1,16 +1,18 @@
 package com.androidtest.gbellisima.androidtest
 
 import com.google.android.gms.ads.AdListener
-import com.google.android.gms.ads.AdRequest
-import com.google.android.gms.ads.InterstitialAd
-
 import android.os.Bundle
+import android.os.CountDownTimer
 import android.support.v7.app.AppCompatActivity
-import android.view.Menu
-import android.view.MenuItem
+import android.view.View
 import android.widget.Toast
+import com.google.android.gms.ads.doubleclick.PublisherAdRequest
+import com.google.android.gms.ads.doubleclick.PublisherInterstitialAd
+
 
 import kotlinx.android.synthetic.main.activity_main.*
+
+const val GAME_LENGTH_MILLISECONDS: Long = 3000
 
 // Remove the line below after defining your own ad unit ID.
 private const val TOAST_TEXT = "Test ads are being shown. " +
@@ -20,84 +22,102 @@ private const val START_LEVEL = 1
 
 class MainActivity : AppCompatActivity() {
 
-    private var currentLevel: Int = 0
-    private var interstitialAd: InterstitialAd? = null
+    private lateinit var mInterstitialAd: PublisherInterstitialAd
+    private var mCountDownTimer: CountDownTimer? = null
+    private var mGameIsInProgress: Boolean = false
+    private var mAdIsLoading: Boolean = false
+    private var mTimerMilliseconds: Long = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // Create the next level button, which tries to show an interstitial when clicked.
-        next_level_button.isEnabled = false
-        next_level_button.setOnClickListener { showInterstitial() }
+        // Create the InterstitialAd and set the adUnitId.
+        mInterstitialAd = PublisherInterstitialAd(this)
+        // Replace with your own ad unit id.
+        mInterstitialAd.adUnitId = "/6499/example/interstitial"
 
-        // Create the text view to show the level number.
-        currentLevel = START_LEVEL
-
-        // Create the InterstitialAd and set the adUnitId (defined in values/strings.xml).
-        interstitialAd = newInterstitialAd()
-        loadInterstitial()
-
-        // Toasts the test ad message on the screen. Remove this after defining your own ad unit ID.
-        Toast.makeText(this, TOAST_TEXT, Toast.LENGTH_LONG).show()
-    }
-
-
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        // Inflate the menu; this adds items to the action bar if it is present.
-        menuInflater.inflate(R.menu.menu_main, menu)
-        return true
-    }
-
-    override fun onOptionsItemSelected(item: MenuItem) =
-            when (item.itemId) {
-                R.id.action_settings -> true
-                else -> super.onOptionsItemSelected(item)
+        mInterstitialAd.adListener = object : AdListener() {
+            override fun onAdClosed() {
+                startGame()
             }
 
-    private fun newInterstitialAd(): InterstitialAd {
-        return InterstitialAd(this).apply {
-            adUnitId = getString(R.string.interstitial_ad_unit_id)
-            adListener = object : AdListener() {
-                override fun onAdLoaded() {
-                    next_level_button.isEnabled = true
-                }
+            override fun onAdLoaded() {
+                mAdIsLoading = false
+            }
 
-                override fun onAdFailedToLoad(errorCode: Int) {
-                    next_level_button.isEnabled = true
-                }
-
-                override fun onAdClosed() {
-                    // Proceed to the next level.
-                    goToNextLevel()
-                }
+            override fun onAdFailedToLoad(errorCode: Int) {
+                mAdIsLoading = false
             }
         }
+        // Create the "retry" button, which tries to show an interstitial between game plays.
+        next_level_button.visibility = View.INVISIBLE
+        next_level_button.setOnClickListener { showInterstitial() }
+
+        startGame()
+    }
+
+    private fun createTimer(milliseconds: Long) {
+        // Create the game timer, which counts down to the end of the level
+        // and shows the "retry" button.
+        mCountDownTimer?.cancel()
+
+        mCountDownTimer = object : CountDownTimer(milliseconds, 50) {
+            override fun onTick(millisUntilFinished: Long) {
+                mTimerMilliseconds = millisUntilFinished
+                level.text = getString(R.string.status_bar_notification_info_overflow, (millisUntilFinished/ 1000 + 1))
+            }
+
+            override fun onFinish() {
+                mGameIsInProgress = false
+                level.setText(R.string.abc_action_mode_done)
+                next_level_button.visibility = View.VISIBLE
+            }
+        }
+    }
+
+    public override fun onResume() {
+        // Start or resume the game.
+        super.onResume()
+
+        if (mGameIsInProgress) {
+            resumeGame(mTimerMilliseconds)
+        }
+    }
+
+    public override fun onPause() {
+        // Cancel the timer if the game is paused.
+        mCountDownTimer?.cancel()
+        super.onPause()
     }
 
     private fun showInterstitial() {
         // Show the ad if it's ready. Otherwise toast and reload the ad.
-        if (interstitialAd?.isLoaded == true) {
-            interstitialAd?.show()
+        if (mInterstitialAd?.isLoaded == true) {
+            mInterstitialAd?.show()
         } else {
             Toast.makeText(this, "Ad did not load", Toast.LENGTH_SHORT).show()
-            goToNextLevel()
+            startGame()
         }
     }
 
-    private fun loadInterstitial() {
-        // Disable the next level button and load the ad.
-        next_level_button.isEnabled = false
-        val adRequest = AdRequest.Builder()
-                .setRequestAgent("android_studio:ad_template")
-                .build()
-        interstitialAd?.loadAd(adRequest)
+    private fun startGame() {
+        // Request a new ad if one isn't already loaded, hide the button, and kick off the timer.
+        if (!mAdIsLoading && !mInterstitialAd.isLoaded) {
+            mAdIsLoading = true
+            val adRequest = PublisherAdRequest.Builder().build()
+            mInterstitialAd.loadAd(adRequest)
+        }
+
+        next_level_button.visibility = View.INVISIBLE
+        resumeGame(GAME_LENGTH_MILLISECONDS)
     }
 
-    private fun goToNextLevel() {
-        // Show the next level and reload the ad to prepare for the level after.
-        level.text = "Level " + (++currentLevel)
-        interstitialAd = newInterstitialAd()
-        loadInterstitial()
+    private fun resumeGame(milliseconds: Long) {
+        // Create a new timer for the correct length and start it.
+        mGameIsInProgress = true
+        mTimerMilliseconds = milliseconds
+        createTimer(milliseconds)
+        mCountDownTimer?.start()
     }
 }
